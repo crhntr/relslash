@@ -48,7 +48,7 @@ func main() {
 	}
 
 	tileRepo, openTileRepoErr := git.PlainOpen(productRepoPath)
-	relRepo, openReleaseRepoErr := git.PlainOpen(releaseRepoPath)
+	boshReleaseRepo, openReleaseRepoErr := git.PlainOpen(releaseRepoPath)
 	if err := anyErr(openTileRepoErr, openReleaseRepoErr); err != nil {
 		log.Fatal("could not open git repository", err)
 	}
@@ -62,27 +62,28 @@ func main() {
 		log.Fatalf("could not get branch repos: %s", err)
 	}
 
-	boshReleaseHead, err := relRepo.Head()
+	sort.Sort(byIncreasingGeneralAvailabilityDate(tileBranches))
+
+	boshReleaseHead, err := boshReleaseRepo.Head()
 	if err != nil {
 		log.Fatalf("could not get head of bosh release repo: %s", err)
 	}
 
 	fmt.Printf("getting versions for bosh release %q (using HEAD %s)", releaseRepoPath, boshReleaseHead.Name())
 
-	relRepoDir, _ := relRepo.Worktree() // error should not occur when using plain open
+	boshReleaseRepoDir, _ := boshReleaseRepo.Worktree() // error should not occur when using plain open
 
-	boshReleaseName, err := boshReleaseName(relRepoDir.Filesystem)
+	boshReleaseName, err := boshReleaseName(boshReleaseRepoDir.Filesystem)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	boshReleaseVersions, boshReleaseVersionIsSemver, err := boshReleaseVersions(relRepoDir.Filesystem)
+	boshReleaseVersions, boshReleaseVersionIsSemver, err := boshReleaseVersions(boshReleaseRepoDir.Filesystem)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	sort.Sort(releasesInOrder(boshReleaseVersions))
-	sort.Sort(byIncreasingGeneralAvailabilityDate(tileBranches))
 
 	for _, v := range boshReleaseVersions {
 		fmt.Println(v)
