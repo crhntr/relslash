@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"github.com/Masterminds/semver"
+	"gopkg.in/src-d/go-billy.v4"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/storer"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
@@ -20,8 +22,8 @@ const (
 	EnvironmentVariableReleaseRepo     = "RELEASE_REPO"
 
 	TileRepoRelBranchPrefix = "rel/"
-	TileRepoMasterBranch = "master"
-	KilnFileRemoteSource = "final-pcf-bosh-releases"
+	TileRepoMasterBranch    = "master"
+	KilnFileRemoteSource    = "final-pcf-bosh-releases"
 )
 
 func main() {
@@ -48,16 +50,20 @@ func main() {
 	tileRepo, openTileRepoErr := git.PlainOpen(productRepoPath)
 	relRepo, openReleaseRepoErr := git.PlainOpen(releaseRepoPath)
 	if err := anyErr(openTileRepoErr, openReleaseRepoErr); err != nil {
-		log.Fatal("git failure", err)
+		log.Fatal("could not open git repository", err)
 	}
 
-	tileBranches, err := getPrefixedBranches(tileRepo)
+	tileRepoBranchIterator, err := tileRepo.Branches()
+	if err != nil {
+		log.Fatalf("could not get local repository branches for the tile repo: %s", err)
+	}
+	tileBranches, err := supportedTileBranches(tileRepoBranchIterator)
 	if err != nil {
 		log.Fatalf("could not get branch repos: %s", err)
 	}
 
 	boshReleaseHead, err := relRepo.Head()
-	if err != nil{
+	if err != nil {
 		log.Fatalf("could not get head of bosh release repo: %s", err)
 	}
 
@@ -65,92 +71,39 @@ func main() {
 
 	relRepoDir, _ := relRepo.Worktree() // error should not occur when using plain open
 
-
-	configFinalFile, err := relRepoDir.Filesystem.Open("config/final.yml")
+	boshReleaseName, err := boshReleaseName(relRepoDir.Filesystem)
 	if err != nil {
-		log.Fatalf(`could not open bosh release's "config/final.yml" file: %s`, err)
+		log.Fatal(err)
 	}
-	buf, err := ioutil.ReadAll(configFinalFile)
+
+	boshReleaseVersions, boshReleaseVersionIsSemver, err := boshReleaseVersions(relRepoDir.Filesystem)
 	if err != nil {
-		log.Fatalf(`could not read bosh release's "config/final.yml" file: %s`, err)
-	}
-	var configFinal struct {
-		Name string `yaml:"name"`
-	}
-	if err := yaml.Unmarshal(buf, &configFinal); err != nil {
-		log.Fatalf(`could not parse yaml in bosh release's "config/final.yml" file: %s`, err)
-	}
-	boshReleaseName := configFinal.Name
-
-	releaseFiles, err := relRepoDir.Filesystem.ReadDir("releases")
-	if err != nil {
-		log.Fatalf("could not read releases directory in bosh release repo: %s", err)
+		log.Fatal(err)
 	}
 
-	var (
-		releaseVersions []*semver.Version
-		boshReleaseVersionIsSemver bool
-	)
+	sort.Sort(releasesInOrder(boshReleaseVersions))
+	sort.Sort(byIncreasingGeneralAvailabilityDate(tileBranches))
 
-	for _, relFile := range releaseFiles {
-		name := relFile.Name()
-		if !strings.HasSuffix(name, ".yml") {
-			continue
-		}
-		name = strings.TrimSuffix(name, ".yml")
-
-		segments := strings.Split(name, "-")
-		if len(segments) == 0 {
-			continue
-		}
-
-		versionString := segments[len(segments)-1]
-
-		switch strings.Count(versionString, ".") {
-		case 1, 2:
-			boshReleaseVersionIsSemver = true
-		}
-
-		v, err := semver.NewVersion(versionString)
-		if err != nil {
-			continue
-		}
-
-		releaseVersions = append(releaseVersions, v)
-	}
-
-	sort.Sort(sortedVersions(releaseVersions))
-	sort.Sort(sortedBranches(tileBranches))
-
-	for _, v := range releaseVersions {
+	for _, v := range boshReleaseVersions {
 		fmt.Println(v)
 	}
 
 	for _, tileBranch := range tileBranches {
 		wt, _ := tileRepo.Worktree()
 
-		if err := wt.Checkout(&git.CheckoutOptions{Branch:tileBranch.Name()}); err != nil {
-			fmt.Printf("could not checkout tile repo at %s", tileBranch.Name())
+		if err := wt.Checkout(&git.CheckoutOptions{Branch: tileBranch.Name()}); err != nil {
+			fmt.Printf("could not checkout tile repo at %s\n", tileBranch.Name())
 			continue
 		}
 
-		kilnfileLock, err := wt.Filesystem.Open("Kilnfile.lock")
+		lock, err := kilnfileLock(wt.Filesystem)
 		if err != nil {
-			fmt.Printf("could not open kilnfile: %s", err)
+			fmt.Println(err)
 			continue
 		}
-		buf, err := ioutil.ReadAll(kilnfileLock)
-		if err != nil {
-			log.Fatalf(`could not read bosh release's "config/final.yml" file: %s`, err)
-		}
-		var lock KilnFileLock
-		if err := yaml.Unmarshal(buf, &lock); err != nil {
-			log.Fatalf(`could not parse yaml in bosh release's "Kilnfile.lock" file: %s`, err)
-		}
-		kilnfileLock.Close()
 
 		var (
-			index int
+			index       int
 			releaseLock LockedRelease
 		)
 
@@ -163,11 +116,10 @@ func main() {
 
 		var updatedVersionString string
 
-
 		switch boshReleaseVersionIsSemver {
 		case true:
 			fmt.Println("case when bosh release is a semver is not handled")
-			switch tileBranch.Name().Short()  {
+			switch tileBranch.Name().Short() {
 			case "master":
 
 			default:
@@ -175,31 +127,20 @@ func main() {
 			}
 
 		case false:
-			updatedVersionString = strconv.FormatInt(releaseVersions[len(releaseVersions)-1].Major(), 10)
+			updatedVersionString = strconv.FormatInt(
+				boshReleaseVersions[len(boshReleaseVersions)-1].Major(),
+				10,
+			)
 		}
 
 		releaseLock.Version = updatedVersionString
 		releaseLock.SHA1 = ""
 		releaseLock.RemoteSource = KilnFileRemoteSource
 		releaseLock.RemotePath = fmt.Sprintf("%[1]s/%[1]s-%[2]s.tgz", boshReleaseName, updatedVersionString)
-
 		lock.Releases[index] = releaseLock
 
-		buf, err = yaml.Marshal(lock)
-		if err != nil {
-			log.Fatalf(`could not render yaml for "Kilnfile.lock": %s`, err)
-		}
-		kilnfileLock, err = wt.Filesystem.OpenFile("Kilnfile.lock", os.O_WRONLY, 0644)
-		if err != nil {
-			fmt.Printf("could not open kilnfile: %s", err)
-			continue
-		}
-		if ln, err := kilnfileLock.Write(buf); err != nil {
-			fmt.Printf(`could not write to "kilnfile.lock": %s`, err)
-			continue
-		} else if ln != len(buf) {
-			fmt.Printf(`could not open write the entire kilnfile.lock; wrote %d bytes`, ln)
-			continue
+		if err := setKilnfileLock(wt.Filesystem, lock); err != nil {
+			log.Fatal(err)
 		}
 
 		if _, err := wt.Commit(fmt.Sprintf("bump %s to version %s", boshReleaseName, updatedVersionString), &git.CommitOptions{
@@ -216,50 +157,88 @@ type KilnFileLock struct {
 }
 
 type LockedRelease struct {
-	Name string `yaml:"name"`
-	Version string `yaml:"name"`
-	SHA1 string `yaml:"sha1"`
+	Name         string `yaml:"name"`
+	Version      string `yaml:"name"`
+	SHA1         string `yaml:"sha1"`
 	RemoteSource string `yaml:"remote_source"`
-	RemotePath string `yaml:"remote_path"`
+	RemotePath   string `yaml:"remote_path"`
 }
 
-type sortedVersions []*semver.Version
+type releasesInOrder []*semver.Version
 
-func (sv sortedVersions) Len() int {
+func (sv releasesInOrder) Len() int {
 	return len(sv)
 }
 
-func (sv sortedVersions) Swap(i, j int) {
+func (sv releasesInOrder) Swap(i, j int) {
 	sv[i], sv[j] = sv[j], sv[i]
 }
 
-func (sv sortedVersions) Less(i, j int) bool {
+func (sv releasesInOrder) Less(i, j int) bool {
 	return sv[i].LessThan(sv[j])
 }
 
-type sortedBranches []plumbing.Reference
+type byIncreasingGeneralAvailabilityDate []plumbing.Reference
 
-func (sv sortedBranches) Len() int {
+func (sv byIncreasingGeneralAvailabilityDate) Len() int {
 	return len(sv)
 }
 
-func (sv sortedBranches) Swap(i, j int) {
+func (sv byIncreasingGeneralAvailabilityDate) Swap(i, j int) {
 	sv[i], sv[j] = sv[j], sv[i]
 }
 
-func (sv sortedBranches) Less(i, j int) bool {
-	return strings.Compare(sv[i].Name().Short(), sv[j].Name().Short()) < 1
+func (sv byIncreasingGeneralAvailabilityDate) Less(i, j int) bool {
+	is, js := sv[i].Name().Short(), sv[j].Name().Short()
+
+	return is != "master" && strings.Compare(is, js) < 1 // TODO: test this
 }
 
-func getPrefixedBranches(repository *git.Repository) ([]plumbing.Reference, error) {
-	refIter, err := repository.Branches()
+func setKilnfileLock(fs billy.Basic, lock KilnFileLock) error {
+	buf, err := yaml.Marshal(lock)
 	if err != nil {
-		return nil, err
+		log.Fatalf(`could not render yaml for "Kilnfile.lock": %s`, err)
+	}
+	file, err := fs.OpenFile("Kilnfile.lock", os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("could not open kilnfile: %s", err)
+	}
+	defer file.Close()
+
+	if ln, err := file.Write(buf); err != nil {
+		return err
+	} else if ln != len(buf) {
+		return fmt.Errorf(`could not open write the entire kilnfile.lock; wrote %d bytes`, ln)
 	}
 
+	return nil
+}
+
+func kilnfileLock(fs billy.Basic) (KilnFileLock, error) {
+	var lock KilnFileLock
+
+	kilnfileLock, err := fs.Open("Kilnfile.lock")
+	if err != nil {
+		return lock, err
+	}
+	defer kilnfileLock.Close()
+
+	buf, err := ioutil.ReadAll(kilnfileLock)
+	if err != nil {
+		return lock, fmt.Errorf(`could not read bosh release's "config/final.yml" file: %s`, err)
+	}
+
+	if err := yaml.Unmarshal(buf, &lock); err != nil {
+		return lock, fmt.Errorf(`could not parse yaml in bosh release's "Kilnfile.lock" file: %s`, err)
+	}
+
+	return lock, nil
+}
+
+func supportedTileBranches(iter storer.ReferenceIter) ([]plumbing.Reference, error) {
 	var tileReleaseBranches []plumbing.Reference
 
-	err = refIter.ForEach(func(ref *plumbing.Reference) error {
+	err := iter.ForEach(func(ref *plumbing.Reference) error {
 		if name := ref.Name().Short(); name == TileRepoMasterBranch || strings.HasPrefix(name, TileRepoRelBranchPrefix) {
 			tileReleaseBranches = append(tileReleaseBranches, *ref)
 		}
@@ -267,6 +246,65 @@ func getPrefixedBranches(repository *git.Repository) ([]plumbing.Reference, erro
 	})
 
 	return tileReleaseBranches, err
+}
+
+func boshReleaseName(fs billy.Filesystem) (string, error) {
+	file, err := fs.Open("config/final.yml")
+	if err != nil {
+		return "", fmt.Errorf(`could not open bosh release's "config/final.yml" file: %s`, err)
+	}
+	buf, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf(`could not read bosh release's "config/final.yml" file: %s`, err)
+	}
+	var configFinal struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(buf, &configFinal); err != nil {
+		return "", fmt.Errorf(`could not parse yaml in bosh release's "config/final.yml" file: %s`, err)
+	}
+	return configFinal.Name, nil
+}
+
+func boshReleaseVersions(fs billy.Dir) ([]*semver.Version, bool, error) {
+	releaseFiles, err := fs.ReadDir("releases")
+	if err != nil {
+		return nil, false, err
+	}
+
+	var (
+		versions []*semver.Version
+		isSemver bool
+	)
+
+	for _, file := range releaseFiles {
+		name := file.Name()
+		if !strings.HasSuffix(name, ".yml") {
+			continue
+		}
+		name = strings.TrimSuffix(name, ".yml")
+
+		segments := strings.Split(name, "-")
+		if len(segments) == 0 {
+			continue
+		}
+
+		versionString := segments[len(segments)-1]
+
+		switch strings.Count(versionString, ".") {
+		case 1, 2:
+			isSemver = true
+		}
+
+		v, err := semver.NewVersion(versionString)
+		if err != nil {
+			continue
+		}
+
+		versions = append(versions, v)
+	}
+
+	return versions, isSemver, nil
 }
 
 func anyErr(errs ...error) error {
