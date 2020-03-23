@@ -6,6 +6,7 @@ import (
 	"gopkg.in/src-d/go-billy.v4"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/object"
 	"gopkg.in/src-d/go-git.v4/plumbing/storer"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
@@ -15,11 +16,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	EnvironmentVariableProductTileRepo = "PRODUCT_TILE_REPO"
-	EnvironmentVariableReleaseRepo     = "RELEASE_REPO"
+	EnvironmentVariableProductTileRepo = "BUMP_RELEASE_PRODUCT_TILE_REPO"
+	EnvironmentVariableReleaseRepo     = "BUMP_RELEASE_RELEASE_REPO"
+	EnvironmentVariableCommitAuthorName     = "BUMP_RELEASE_COMMIT_AUTHOR_NAME"
+	EnvironmentVariableCommitAuthorEmail     = "BUMP_RELEASE_COMMIT_AUTHOR_EMAIL"
 
 	TileRepoRelBranchPrefix = "rel/"
 	TileRepoMasterBranch    = "master"
@@ -29,6 +33,8 @@ const (
 func main() {
 	productRepoPath := os.Getenv(EnvironmentVariableProductTileRepo)
 	releaseRepoPath := os.Getenv(EnvironmentVariableReleaseRepo)
+	commitAuthorName := os.Getenv(EnvironmentVariableCommitAuthorName)
+	commitAuthorEmail := os.Getenv(EnvironmentVariableCommitAuthorEmail)
 
 	var envVarErr error
 	switch {
@@ -41,6 +47,11 @@ func main() {
 		envVarErr = fmt.Errorf(EnvironmentVariableReleaseRepo + " variable not set")
 	case !path.IsAbs(releaseRepoPath):
 		envVarErr = fmt.Errorf(EnvironmentVariableReleaseRepo + " must be an absolute path")
+
+	case commitAuthorName == "":
+		envVarErr = fmt.Errorf(EnvironmentVariableCommitAuthorName + " variable not set")
+	case commitAuthorEmail == "":
+		envVarErr = fmt.Errorf(EnvironmentVariableCommitAuthorEmail + " variable not set")
 	}
 
 	if envVarErr != nil {
@@ -64,18 +75,15 @@ func main() {
 
 	sort.Sort(byIncreasingGeneralAvailabilityDate(tileBranches))
 
-	boshReleaseHead, err := boshReleaseRepo.Head()
-	if err != nil {
-		log.Fatalf("could not get head of bosh release repo: %s", err)
-	}
-
-	fmt.Printf("getting versions for bosh release %q (using HEAD %s)", releaseRepoPath, boshReleaseHead.Name())
-
 	boshReleaseRepoDir, _ := boshReleaseRepo.Worktree() // error should not occur when using plain open
 
 	boshReleaseName, err := boshReleaseName(boshReleaseRepoDir.Filesystem)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if boshReleaseName == "" {
+		log.Fatalf("bosh release name was not found")
 	}
 
 	boshReleaseVersions, boshReleaseVersionIsSemver, err := boshReleaseVersions(boshReleaseRepoDir.Filesystem)
@@ -85,15 +93,14 @@ func main() {
 
 	sort.Sort(releasesInOrder(boshReleaseVersions))
 
-	for _, v := range boshReleaseVersions {
-		fmt.Println(v)
-	}
-
+branchLoop:
 	for _, tileBranch := range tileBranches {
 		wt, _ := tileRepo.Worktree()
 
-		if err := wt.Checkout(&git.CheckoutOptions{Branch: tileBranch.Name()}); err != nil {
-			fmt.Printf("could not checkout tile repo at %s\n", tileBranch.Name())
+		fmt.Printf("checking out tile repository at %q\n", tileBranch.Name().Short())
+
+		if err := wt.Checkout(&git.CheckoutOptions{Branch: tileBranch.Name(), Force: true}); err != nil {
+			fmt.Printf("could not checkout tile repo: %s", err)
 			continue
 		}
 
@@ -103,28 +110,26 @@ func main() {
 			continue
 		}
 
-		var (
-			index       int
-			releaseLock LockedRelease
-		)
-
-		for idx, release := range lock.Releases {
-			if release.Name == boshReleaseName {
-				index, releaseLock = idx, release
-				break
-			}
+		releaseLock, index, err := releaseLockWithName(boshReleaseName, lock.Releases)
+		if err != nil {
+			fmt.Println(err)
+			continue
 		}
+
+		fmt.Printf("\tcurently the Kilnfile.lock release %q is locked to version %q\n", releaseLock.Name, releaseLock.Version)
 
 		var updatedVersionString string
 
 		switch boshReleaseVersionIsSemver {
 		case true:
 			fmt.Println("case when bosh release is a semver is not handled")
+			continue branchLoop
+
 			switch tileBranch.Name().Short() {
 			case "master":
-
+				// bump to highest major
 			default:
-
+				// bump to highest patch based on releaseLock
 			}
 
 		case false:
@@ -134,7 +139,13 @@ func main() {
 			)
 		}
 
-		releaseLock.Version = updatedVersionString
+		if releaseLock.Version == updatedVersionString {
+			fmt.Printf("\tKilnfile.lock already has the latest (%q) bosh release for release %q\n", releaseLock.Version, releaseLock.Name)
+			continue
+		}
+
+		releaseLock.Version = updatedVersionString // the update
+
 		releaseLock.SHA1 = ""
 		releaseLock.RemoteSource = KilnFileRemoteSource
 		releaseLock.RemotePath = fmt.Sprintf("%[1]s/%[1]s-%[2]s.tgz", boshReleaseName, updatedVersionString)
@@ -144,23 +155,42 @@ func main() {
 			log.Fatal(err)
 		}
 
-		if _, err := wt.Commit(fmt.Sprintf("bump %s to version %s", boshReleaseName, updatedVersionString), &git.CommitOptions{
-			All: true,
-		}); err != nil {
-
+		status, err := wt.Status()
+		if err != nil {
+			log.Fatalf("could not show git status: %s", err)
 		}
 
+		if status.IsClean() {
+			fmt.Printf("\ttile repository worktree is clean; no change to commit\n")
+			continue
+		}
+
+		fmt.Printf("\tupadating the Kilnfile.lock release %q to %q\n", releaseLock.Name, releaseLock.Version)
+
+		commitSHA, err := wt.Commit(fmt.Sprintf("bump %s to version %s", boshReleaseName, updatedVersionString), &git.CommitOptions{
+			All: true, // maybe instead of all we should check if "Kilnfile.lock" is the only "added" change
+			Author: &object.Signature{
+				Name:  commitAuthorName,
+				Email: commitAuthorEmail,
+				When:  time.Now(),
+			},
+		})
+		if err != nil {
+			log.Fatalf("could not create commit for tile repo on branch %q: %s", tileBranch.Name().Short(), err)
+		}
+
+		fmt.Printf("\tcreated a commit for the release release bump; the commit sha is %q\n", commitSHA.String())
 	}
 }
 
 type KilnFileLock struct {
-	Releases []LockedRelease `yaml:"releases"`
+	Releases []ReleaseLock `yaml:"releases"`
 }
 
-type LockedRelease struct {
+type ReleaseLock struct {
 	Name         string `yaml:"name"`
-	Version      string `yaml:"name"`
-	SHA1         string `yaml:"sha1"`
+	SHA1         string `yaml:"sha1,omitempty"`
+	Version      string `yaml:"version"`
 	RemoteSource string `yaml:"remote_source"`
 	RemotePath   string `yaml:"remote_path"`
 }
@@ -200,7 +230,7 @@ func setKilnfileLock(fs billy.Basic, lock KilnFileLock) error {
 	if err != nil {
 		log.Fatalf(`could not render yaml for "Kilnfile.lock": %s`, err)
 	}
-	file, err := fs.OpenFile("Kilnfile.lock", os.O_WRONLY, 0644)
+	file, err := fs.OpenFile("Kilnfile.lock", os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("could not open kilnfile: %s", err)
 	}
@@ -259,7 +289,7 @@ func boshReleaseName(fs billy.Filesystem) (string, error) {
 		return "", fmt.Errorf(`could not read bosh release's "config/final.yml" file: %s`, err)
 	}
 	var configFinal struct {
-		Name string `yaml:"name"`
+		Name string `yaml:"final_name"`
 	}
 	if err := yaml.Unmarshal(buf, &configFinal); err != nil {
 		return "", fmt.Errorf(`could not parse yaml in bosh release's "config/final.yml" file: %s`, err)
@@ -306,6 +336,17 @@ func boshReleaseVersions(fs billy.Dir) ([]*semver.Version, bool, error) {
 	}
 
 	return versions, isSemver, nil
+}
+
+
+func releaseLockWithName(name string, releases []ReleaseLock) (ReleaseLock, int, error) {
+	for index, release := range releases {
+		if release.Name == name {
+			return release, index, nil
+		}
+	}
+
+	return ReleaseLock{}, 0, fmt.Errorf("could not find release lock with name: %s", name)
 }
 
 func anyErr(errs ...error) error {
