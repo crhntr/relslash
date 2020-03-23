@@ -2,13 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/Masterminds/semver"
-	"gopkg.in/src-d/go-billy.v4"
-	"gopkg.in/src-d/go-git.v4"
-	"gopkg.in/src-d/go-git.v4/plumbing"
-	"gopkg.in/src-d/go-git.v4/plumbing/object"
-	"gopkg.in/src-d/go-git.v4/plumbing/storer"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"os"
@@ -17,13 +10,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Masterminds/semver"
+	"gopkg.in/src-d/go-billy.v4"
+	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/object"
+	"gopkg.in/src-d/go-git.v4/plumbing/storer"
+	"gopkg.in/yaml.v2"
 )
 
 const (
-	EnvironmentVariableProductTileRepo = "BUMP_RELEASE_PRODUCT_TILE_REPO"
-	EnvironmentVariableReleaseRepo     = "BUMP_RELEASE_RELEASE_REPO"
-	EnvironmentVariableCommitAuthorName     = "BUMP_RELEASE_COMMIT_AUTHOR_NAME"
-	EnvironmentVariableCommitAuthorEmail     = "BUMP_RELEASE_COMMIT_AUTHOR_EMAIL"
+	EnvironmentVariableProductTileRepo   = "BUMP_RELEASE_PRODUCT_TILE_REPO"
+	EnvironmentVariableReleaseRepo       = "BUMP_RELEASE_RELEASE_REPO"
+	EnvironmentVariableCommitAuthorName  = "BUMP_RELEASE_COMMIT_AUTHOR_NAME"
+	EnvironmentVariableCommitAuthorEmail = "BUMP_RELEASE_COMMIT_AUTHOR_EMAIL"
 
 	TileRepoRelBranchPrefix = "rel/"
 	TileRepoMasterBranch    = "master"
@@ -337,7 +338,6 @@ func boshReleaseVersions(fs billy.Dir) ([]*semver.Version, bool, error) {
 
 	return versions, isSemver, nil
 }
-
 
 func releaseLockWithName(name string, releases []ReleaseLock) (ReleaseLock, int, error) {
 	for index, release := range releases {
