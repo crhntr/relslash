@@ -24,7 +24,7 @@ func main() {
 	go statusText(body, "Loading Data From Repos", statusIndicator)
 
 	fatal := func(err error) {
-		statusIndicator <- "Error fetching data: " + err.Error()
+		statusIndicator <- "ERROR " + err.Error()
 		time.Sleep(time.Second)
 		os.Exit(1)
 	}
