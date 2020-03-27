@@ -3,8 +3,14 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
 	"syscall/js"
 	"time"
+
+	"github.com/crhntr/relslash"
 )
 
 func main() {
@@ -12,15 +18,32 @@ func main() {
 	body := document.Get("body")
 
 	statusIndicator := make(chan string)
-	go statusText(body, "Loading", statusIndicator)
+	go statusText(body, "Loading Bump Request Data", statusIndicator)
 
-	time.Sleep(time.Second * 8)
+	fatal := func(err error) {
+		statusIndicator <- "Error fetching data: " + err.Error()
+		time.Sleep(time.Second)
+		os.Exit(1)
+	}
 
-	statusIndicator <- "petting dog"
+	var data struct {
+		relslash.BoshReleaseBumpSetData
+		VersionMapping map[string][]relslash.Reference
+	}
+	for {
+		res, err := http.Get("/api/v0/data")
+		if err != nil {
+			fatal(err)
+		}
 
-	time.Sleep(time.Second * 8)
+		if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+			fatal(err)
+		}
 
-	close(statusIndicator)
+		break
+	}
+
+	statusIndicator <- fmt.Sprintf("%#v", data)
 
 	select {}
 }

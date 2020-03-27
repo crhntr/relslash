@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
+	"github.com/Masterminds/semver"
+	"gopkg.in/src-d/go-git.v4/plumbing"
 	"log"
 	"os"
 	"path"
-	"sort"
 	"strconv"
 	"time"
 
@@ -50,43 +51,23 @@ func main() {
 		log.Fatal(envVarErr)
 	}
 
-	tileRepo, openTileRepoErr := git.PlainOpen(productRepoPath)
-	boshReleaseRepo, openReleaseRepoErr := git.PlainOpen(releaseRepoPath)
-	if err := anyErr(openTileRepoErr, openReleaseRepoErr); err != nil {
-		log.Fatal("could not open git repository", err)
-	}
-
-	tileRepoBranchIterator, err := tileRepo.Branches()
+	tileRepo, err := git.PlainOpen(productRepoPath)
 	if err != nil {
-		log.Fatalf("could not get local repository branches for the tile repo: %s", err)
+		log.Fatalf("could not open tile repo: %s", err)
 	}
-	tileBranches, err := relslash.SupportedTileBranches(tileRepoBranchIterator)
+	boshReleaseRepo, err := git.PlainOpen(releaseRepoPath)
 	if err != nil {
-		log.Fatalf("could not get branch repos: %s", err)
+		log.Fatalf("could not open release repo: %s", err)
 	}
 
-	sort.Sort(relslash.ByIncreasingGeneralAvailabilityDate(tileBranches))
-
-	boshReleaseRepoDir, _ := boshReleaseRepo.Worktree() // error should not occur when using plain open
-
-	boshReleaseName, err := relslash.BoshReleaseName(boshReleaseRepoDir.Filesystem)
+	data, err := relslash.NewBoshReleaseBumpSetData(tileRepo, boshReleaseRepo)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	if boshReleaseName == "" {
-		log.Fatalf("bosh release name was not found")
-	}
-
-	boshReleaseVersions, boshReleaseVersionIsSemver, err := relslash.BoshReleaseVersions(boshReleaseRepoDir.Filesystem)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sort.Sort(relslash.ReleasesInOrder(boshReleaseVersions))
 
 branchLoop:
-	for _, tileBranch := range tileBranches {
+	for _, tb := range data.TileBranches {
+		tileBranch := plumbing.Reference(tb)
 		wt, _ := tileRepo.Worktree()
 
 		fmt.Printf("checking out tile repository at %q\n", tileBranch.Name().Short())
@@ -102,7 +83,7 @@ branchLoop:
 			continue
 		}
 
-		releaseLock, index, err := relslash.ReleaseLockWithName(boshReleaseName, lock.Releases)
+		releaseLock, index, err := relslash.ReleaseLockWithName(data.BoshReleaseName, lock.Releases)
 		if err != nil {
 			fmt.Println(err)
 			continue
@@ -112,7 +93,7 @@ branchLoop:
 
 		var updatedVersionString string
 
-		switch boshReleaseVersionIsSemver {
+		switch data.BoshReleaseVersionIsSemver {
 		case true:
 			fmt.Println("case when bosh release is a semver is not handled")
 			continue branchLoop
@@ -126,7 +107,7 @@ branchLoop:
 
 		case false:
 			updatedVersionString = strconv.FormatInt(
-				boshReleaseVersions[len(boshReleaseVersions)-1].Major(),
+				semver.Version(data.BoshReleaseVersions[len(data.BoshReleaseVersions)-1]).Major(),
 				10,
 			)
 		}
@@ -140,7 +121,7 @@ branchLoop:
 
 		releaseLock.SHA1 = ""
 		releaseLock.RemoteSource = relslash.KilnFileRemoteSource
-		releaseLock.RemotePath = fmt.Sprintf("%[1]s/%[1]s-%[2]s.tgz", boshReleaseName, updatedVersionString)
+		releaseLock.RemotePath = fmt.Sprintf("%[1]s/%[1]s-%[2]s.tgz", data.BoshReleaseName, updatedVersionString)
 		lock.Releases[index] = releaseLock
 
 		if err := relslash.SetKilnfileLock(wt.Filesystem, lock); err != nil {
@@ -159,7 +140,7 @@ branchLoop:
 
 		fmt.Printf("\tupadating the Kilnfile.lock release %q to %q\n", releaseLock.Name, releaseLock.Version)
 
-		commitSHA, err := wt.Commit(fmt.Sprintf("bump %s to version %s", boshReleaseName, updatedVersionString), &git.CommitOptions{
+		commitSHA, err := wt.Commit(fmt.Sprintf("bump %s to version %s", data.BoshReleaseName, updatedVersionString), &git.CommitOptions{
 			All: true, // maybe instead of all we should check if "Kilnfile.lock" is the only "added" change
 			Author: &object.Signature{
 				Name:  commitAuthorName,
@@ -173,13 +154,4 @@ branchLoop:
 
 		fmt.Printf("\tcreated a commit for the release release bump; the commit sha is %q\n", commitSHA.String())
 	}
-}
-
-func anyErr(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
