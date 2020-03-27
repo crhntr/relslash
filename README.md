@@ -9,6 +9,10 @@ I am feeling the best place for most of this code is to be integrated into the h
 
 The product repo must be in good shape ("master" and "rel/*' branches clean).
 
+Make sure the env script is run to get the correct `wasm_exec.js` file.
+
+Also if you don't mind please replace the git name and email to your own.
+
 ## Development Setup
 
 I ran the following in the demo on 2020/03/27.
