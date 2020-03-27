@@ -47,13 +47,6 @@ func rootHandler(handler http.Handler) http.HandlerFunc {
 	}
 }
 
-func unsetHeader(header string, handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		res.Header().Del(header)
-		handler.ServeHTTP(res, req)
-	})
-}
-
 type logRecord struct {
 	http.ResponseWriter
 	status int
