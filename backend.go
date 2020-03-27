@@ -4,9 +4,10 @@ package relslash
 
 import (
 	"fmt"
+	"sort"
+
 	"github.com/Masterminds/semver"
 	"gopkg.in/src-d/go-git.v4/plumbing"
-	"sort"
 
 	"gopkg.in/src-d/go-git.v4"
 )

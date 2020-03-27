@@ -5,12 +5,14 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"github.com/Masterminds/semver"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"html/template"
-	"os"
 	"sort"
 	"syscall/js"
+	"net/http"
+	"encoding/json"
 	"time"
 
 	"github.com/crhntr/relslash"
@@ -21,13 +23,15 @@ func main() {
 	body := document.Get("body")
 
 	statusIndicator := make(chan string)
-	go statusText(body, "Loading Data From Repos", statusIndicator)
+	go statusText(body, statusIndicator)
 
 	fatal := func(err error) {
 		statusIndicator <- "ERROR " + err.Error()
 		time.Sleep(time.Second)
 		os.Exit(1)
 	}
+
+	statusIndicator <- "Requesting data"
 
 	var data struct {
 		relslash.BoshReleaseBumpSetData
@@ -86,8 +90,8 @@ func main() {
 	select {}
 }
 
-func statusText(el js.Value, initial string, status chan string) {
-	msg := initial
+func statusText(el js.Value, status chan string) {
+	msg := el.Get("innerTEXT").String()
 
 	ticker := time.NewTicker(time.Second)
 
