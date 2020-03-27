@@ -4,12 +4,10 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"github.com/Masterminds/semver"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"html/template"
-	"net/http"
 	"os"
 	"sort"
 	"syscall/js"
@@ -35,22 +33,19 @@ func main() {
 		relslash.BoshReleaseBumpSetData
 		VersionMapping map[string][]relslash.Reference
 	}
-	for {
-		res, err := http.Get("/api/v0/data")
-		if err != nil {
-			fatal(err)
-		}
 
-		if res.StatusCode != http.StatusOK {
-			fatal(fmt.Errorf("non successful status code: %d", res.StatusCode))
-		}
+	res, err := http.Get("/api/v0/data")
+	if err != nil {
+		fatal(err)
+	}
 
-		statusIndicator <- "Parsing data"
-		if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
-			fatal(err)
-		}
+	if res.StatusCode != http.StatusOK {
+		fatal(fmt.Errorf("non successful status code: %d", res.StatusCode))
+	}
 
-		break
+	statusIndicator <- "Parsing data"
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+		fatal(err)
 	}
 
 	sort.Sort(relslash.VersionsDecreasing(data.BoshReleaseVersions))
