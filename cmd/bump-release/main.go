@@ -107,7 +107,7 @@ branchLoop:
 
 		case false:
 			updatedVersionString = strconv.FormatInt(
-				semver.Version(data.BoshReleaseVersions[len(data.BoshReleaseVersions)-1]).Major(),
+				(*semver.Version)(&data.BoshReleaseVersions[len(data.BoshReleaseVersions)-1]).Major(),
 				10,
 			)
 		}
