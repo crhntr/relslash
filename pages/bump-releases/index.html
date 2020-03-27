@@ -6,6 +6,35 @@
     <script src="/assets/scripts/wasm_exec.js" type="application/javascript"></script>
     <script src="/assets/scripts/init.js" type="application/javascript"></script>
     <script type="application/javascript">init("/bin/bump-releases.wasm")</script>
+    <script type="text/x-template" id="page-template">
+        <div>
+            <h1>{{.BoshReleaseName}}</h1>
+            <table>
+                <th>
+                <tr>
+                    <td>Tile Branch</td>
+                    <td>Current</td>
+                    <td>Bump</td>
+                </tr>
+                </th>
+            {{range $branch := .TileBranches }}
+            {{with $currentVersion := (CurrentBOSHReleaseVersion $branch) }}
+                <tr>
+                    <td>{{ShortBranchName $branch}}</td>
+                    <td>{{$currentVersion}}</td>
+                    <td>
+                        <select>
+                            {{- range $.BoshReleaseVersions}}
+                            <option value="{{.}}"{{if eq $currentVersion (printf "%s" .)}} selected="selected"{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </td>
+                </tr>
+            {{end}}
+            {{end}}
+            </table>
+        </div>
+    </script>
 </head>
 <body>Loading...</body>
 </html>

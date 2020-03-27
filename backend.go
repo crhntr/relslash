@@ -45,7 +45,7 @@ func NewBoshReleaseBumpSetData(tileRepo, releaseRepo *git.Repository) (BoshRelea
 		return data, err
 	}
 
-	sort.Sort(ReleasesInOrder(data.BoshReleaseVersions))
+	sort.Sort(VersionsIncreasing(data.BoshReleaseVersions))
 
 	return data, nil
 }
@@ -57,20 +57,18 @@ func (data BoshReleaseBumpSetData) MapTileBranchesToBoshReleaseVersions(tileRepo
 		tileBranch := plumbing.Reference(tb)
 		wt, _ := tileRepo.Worktree()
 
-		fmt.Printf("checking out tile repository at %q\n", tileBranch.Name().Short())
-
 		if err := wt.Checkout(&git.CheckoutOptions{Branch: tileBranch.Name(), Force: true}); err != nil {
-			return mapping, err
+			return mapping, fmt.Errorf("checkout error: %w", err)
 		}
 
 		lock, err := KilnfileLock(wt.Filesystem)
 		if err != nil {
-			return mapping, err
+			return mapping, fmt.Errorf("Kilnfile.lock error: %w", err)
 		}
 
 		releaseLock, _, err := ReleaseLockWithName(data.BoshReleaseName, lock.Releases)
 		if err != nil {
-			return mapping, err
+			return mapping, fmt.Errorf("could nof find release lock with name %q: %w", data.BoshReleaseName, err)
 		}
 
 		v, err := semver.NewVersion(releaseLock.Version)

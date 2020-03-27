@@ -3,10 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/Masterminds/semver"
+	"gopkg.in/src-d/go-git.v4/plumbing"
+	"html/template"
 	"net/http"
 	"os"
+	"sort"
 	"syscall/js"
 	"time"
 
@@ -18,7 +23,7 @@ func main() {
 	body := document.Get("body")
 
 	statusIndicator := make(chan string)
-	go statusText(body, "Loading Bump Request Data", statusIndicator)
+	go statusText(body, "Loading Data From Repos", statusIndicator)
 
 	fatal := func(err error) {
 		statusIndicator <- "Error fetching data: " + err.Error()
@@ -36,6 +41,11 @@ func main() {
 			fatal(err)
 		}
 
+		if res.StatusCode != http.StatusOK {
+			fatal(fmt.Errorf("non successful status code: %d", res.StatusCode))
+		}
+
+		statusIndicator <- "Parsing data"
 		if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 			fatal(err)
 		}
@@ -43,7 +53,40 @@ func main() {
 		break
 	}
 
-	statusIndicator <- fmt.Sprintf("%#v", data)
+	sort.Sort(relslash.VersionsDecreasing(data.BoshReleaseVersions))
+
+	statusIndicator <- "Rendering Data"
+
+	t := template.New("page-template")
+	t = t.Funcs(template.FuncMap{
+		"ShortBranchName": func(ref relslash.Reference) string {
+			return (*plumbing.Reference)(&ref).Name().Short()
+		},
+		"CurrentBOSHReleaseVersion": func(ref relslash.Reference) string {
+			for v, branches := range data.VersionMapping {
+				for _, b := range branches {
+					if (*plumbing.Reference)(&b).Strings() == (*plumbing.Reference)(&ref).Strings() {
+						ver, err := semver.NewVersion(v)
+						if err != nil {
+							fmt.Println("could not render version for branch: %s", err)
+						}
+						return ver.String()
+					}
+				}
+			}
+			return ""
+		},
+	})
+	pageTemplate := template.Must(t.Parse(document.Call("getElementById", "page-template").Get("innerText").String()))
+
+	var buf bytes.Buffer
+	if err := pageTemplate.Execute(&buf, data); err != nil {
+		fatal(err)
+	}
+
+	close(statusIndicator)
+
+	body.Set("innerHTML", buf.String())
 
 	select {}
 }
@@ -62,7 +105,6 @@ loop:
 			el.Set("innerHTML", msg+dots[:i%(len(dots)+1)])
 		case str, open := <-status:
 			if !open {
-				el.Set("innerHTML", "")
 				ticker.Stop()
 				break loop
 			}

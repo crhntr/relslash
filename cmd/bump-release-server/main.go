@@ -46,6 +46,10 @@ func main() {
 		}
 
 		mapping, err := data.MapTileBranchesToBoshReleaseVersions(tileRepo)
+		if err != nil {
+			http.Error(res, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		res.Header().Set("content-type", "application/json")
 		res.WriteHeader(http.StatusOK)

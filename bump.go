@@ -46,18 +46,32 @@ type ReleaseLock struct {
 	RemotePath   string `yaml:"remote_path"`
 }
 
-type ReleasesInOrder []Version
+type VersionsIncreasing []Version
 
-func (sv ReleasesInOrder) Len() int {
+func (sv VersionsIncreasing) Len() int {
 	return len(sv)
 }
 
-func (sv ReleasesInOrder) Swap(i, j int) {
+func (sv VersionsIncreasing) Swap(i, j int) {
 	sv[i], sv[j] = sv[j], sv[i]
 }
 
-func (sv ReleasesInOrder) Less(i, j int) bool {
+func (sv VersionsIncreasing) Less(i, j int) bool {
 	return (*semver.Version)(&sv[i]).LessThan((*semver.Version)(&sv[j]))
+}
+
+type VersionsDecreasing []Version
+
+func (sv VersionsDecreasing) Len() int {
+	return len(sv)
+}
+
+func (sv VersionsDecreasing) Swap(i, j int) {
+	sv[i], sv[j] = sv[j], sv[i]
+}
+
+func (sv VersionsDecreasing) Less(i, j int) bool {
+	return !(*semver.Version)(&sv[i]).LessThan((*semver.Version)(&sv[j]))
 }
 
 type ByIncreasingGeneralAvailabilityDate []Reference
@@ -206,6 +220,10 @@ func (rf *Reference) UnmarshalJSON(buf []byte) error {
 
 type Version semver.Version
 
+func (v Version) String() string {
+	return (*semver.Version)(&v).String()
+}
+
 func (v *Version) UnmarshalJSON(buf []byte) error {
 	if v == nil {
 		return fmt.Errorf("reciever must not be nil")
@@ -227,7 +245,7 @@ func (v *Version) UnmarshalJSON(buf []byte) error {
 }
 
 func (v Version) MarshalJSON() ([]byte, error) {
-	return json.Marshal((*semver.Version)(&v).String())
+	return json.Marshal(v.String())
 }
 
 type BoshReleaseBumpSetData struct {
