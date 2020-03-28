@@ -6,14 +6,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/Masterminds/semver"
-	"gopkg.in/src-d/go-git.v4/plumbing"
 	"html/template"
 	"net/http"
 	"os"
 	"sort"
 	"syscall/js"
 	"time"
+
+	"github.com/Masterminds/semver"
+	"gopkg.in/src-d/go-git.v4/plumbing"
 
 	"github.com/crhntr/relslash"
 )
