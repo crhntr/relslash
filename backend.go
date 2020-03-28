@@ -7,8 +7,6 @@ import (
 	"sort"
 
 	"github.com/Masterminds/semver"
-	"gopkg.in/src-d/go-git.v4/plumbing"
-
 	"gopkg.in/src-d/go-git.v4"
 )
 
@@ -54,8 +52,7 @@ func NewBoshReleaseBumpSetData(tileRepo, releaseRepo *git.Repository) (BoshRelea
 func (data BoshReleaseBumpSetData) MapTileBranchesToBoshReleaseVersions(tileRepo *git.Repository) (map[string][]Reference, error) {
 	mapping := make(map[string][]Reference)
 
-	for _, tb := range data.TileBranches {
-		tileBranch := plumbing.Reference(tb)
+	for _, tileBranch := range data.TileBranches {
 		wt, _ := tileRepo.Worktree()
 
 		if err := wt.Checkout(&git.CheckoutOptions{Branch: tileBranch.Name(), Force: true}); err != nil {
@@ -74,7 +71,7 @@ func (data BoshReleaseBumpSetData) MapTileBranchesToBoshReleaseVersions(tileRepo
 
 		v, err := semver.NewVersion(releaseLock.Version)
 
-		mapping[v.String()] = append(mapping[v.String()], tb)
+		mapping[v.String()] = append(mapping[v.String()], Reference(*tileBranch))
 	}
 	return mapping, nil
 }

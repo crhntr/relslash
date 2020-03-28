@@ -21,12 +21,12 @@ const (
 	KilnFileRemoteSource    = "final-pcf-bosh-releases"
 )
 
-func SupportedTileBranches(iter storer.ReferenceIter) ([]Reference, error) {
-	var tileReleaseBranches []Reference
+func SupportedTileBranches(iter storer.ReferenceIter) ([]*plumbing.Reference, error) {
+	var tileReleaseBranches []*plumbing.Reference
 
 	err := iter.ForEach(func(ref *plumbing.Reference) error {
 		if name := ref.Name().Short(); name == TileRepoMasterBranch || strings.HasPrefix(name, TileRepoRelBranchPrefix) {
-			tileReleaseBranches = append(tileReleaseBranches, Reference(*ref))
+			tileReleaseBranches = append(tileReleaseBranches, ref)
 		}
 		return nil
 	})
@@ -46,7 +46,7 @@ type ReleaseLock struct {
 	RemotePath   string `yaml:"remote_path"`
 }
 
-type VersionsIncreasing []Version
+type VersionsIncreasing []*semver.Version
 
 func (sv VersionsIncreasing) Len() int {
 	return len(sv)
@@ -57,10 +57,10 @@ func (sv VersionsIncreasing) Swap(i, j int) {
 }
 
 func (sv VersionsIncreasing) Less(i, j int) bool {
-	return (*semver.Version)(&sv[i]).LessThan((*semver.Version)(&sv[j]))
+	return sv[i].LessThan(sv[j])
 }
 
-type VersionsDecreasing []Version
+type VersionsDecreasing []*semver.Version
 
 func (sv VersionsDecreasing) Len() int {
 	return len(sv)
@@ -71,10 +71,10 @@ func (sv VersionsDecreasing) Swap(i, j int) {
 }
 
 func (sv VersionsDecreasing) Less(i, j int) bool {
-	return !(*semver.Version)(&sv[i]).LessThan((*semver.Version)(&sv[j]))
+	return !sv[i].LessThan(sv[j])
 }
 
-type ByIncreasingGeneralAvailabilityDate []Reference
+type ByIncreasingGeneralAvailabilityDate []*plumbing.Reference
 
 func (sv ByIncreasingGeneralAvailabilityDate) Len() int {
 	return len(sv)
@@ -85,7 +85,7 @@ func (sv ByIncreasingGeneralAvailabilityDate) Swap(i, j int) {
 }
 
 func (sv ByIncreasingGeneralAvailabilityDate) Less(i, j int) bool {
-	is, js := (*plumbing.Reference)(&sv[i]).Name().Short(), (*plumbing.Reference)(&sv[j]).Name().Short()
+	is, js := sv[i].Name().Short(), sv[j].Name().Short()
 	return is != "master" && strings.Compare(is, js) < 1 // TODO: test this
 }
 
@@ -148,14 +148,14 @@ func BoshReleaseName(fs billy.Filesystem) (string, error) {
 	return configFinal.Name, nil
 }
 
-func BoshReleaseVersions(fs billy.Dir) ([]Version, bool, error) {
+func BoshReleaseVersions(fs billy.Dir) ([]*semver.Version, bool, error) {
 	releaseFiles, err := fs.ReadDir("releases")
 	if err != nil {
 		return nil, false, err
 	}
 
 	var (
-		versions []Version
+		versions []*semver.Version
 		isSemver bool
 	)
 
@@ -183,7 +183,7 @@ func BoshReleaseVersions(fs billy.Dir) ([]Version, bool, error) {
 			continue
 		}
 
-		versions = append(versions, Version(*v))
+		versions = append(versions, v)
 	}
 
 	return versions, isSemver, nil
@@ -199,6 +199,33 @@ func ReleaseLockWithName(name string, releases []ReleaseLock) (ReleaseLock, int,
 	return ReleaseLock{}, 0, fmt.Errorf("could not find release lock with name: %s", name)
 }
 
+type ReferenceList []*plumbing.Reference
+
+func (rfl ReferenceList) MarshalJSON() ([]byte, error) {
+	list := make([][2]string, len(rfl))
+
+	for _, el := range rfl {
+		strs := el.Strings()
+		list = append(list, [2]string{strs[0], strs[1]})
+	}
+
+	return json.Marshal(list)
+}
+
+func (rfl *ReferenceList) UnmarshalJSON(buf []byte) error {
+	var list [][2]string
+
+	if err := json.Unmarshal(buf, &list); err != nil {
+		return err
+	}
+
+	for _, el := range list {
+		*rfl = append(*rfl, plumbing.NewReferenceFromStrings(el[0], el[1]))
+	}
+
+	return nil
+}
+
 type Reference plumbing.Reference
 
 func (rf Reference) MarshalJSON() ([]byte, error) {
@@ -206,51 +233,52 @@ func (rf Reference) MarshalJSON() ([]byte, error) {
 }
 
 func (rf *Reference) UnmarshalJSON(buf []byte) error {
-	var list [2]string
-	if err := json.Unmarshal(buf, &list); err != nil {
+	var el [2]string
+
+	if err := json.Unmarshal(buf, &el); err != nil {
 		return err
 	}
 
-	ref := plumbing.NewReferenceFromStrings(list[0], list[1])
-
-	(*rf) = (Reference)(*ref)
+	ref := plumbing.NewReferenceFromStrings(el[0], el[1])
+	*rf = (Reference)(*ref)
 
 	return nil
 }
 
-type Version semver.Version
+type VersionList []*semver.Version
 
-func (v Version) String() string {
-	return (*semver.Version)(&v).String()
-}
-
-func (v *Version) UnmarshalJSON(buf []byte) error {
-	if v == nil {
-		return fmt.Errorf("reciever must not be nil")
-	}
-
-	var str string
-	if err := json.Unmarshal(buf, &str); err != nil {
+func (vl *VersionList) UnmarshalJSON(buf []byte) error {
+	var strs []string
+	if err := json.Unmarshal(buf, &strs); err != nil {
 		return err
 	}
-	version, err := semver.NewVersion(str)
-	if err != nil {
-		return err
 
+	for _, str := range strs {
+		version, err := semver.NewVersion(str)
+		if err != nil {
+			return err
+
+		}
+
+		*vl = append(*vl, version)
 	}
-
-	(*v) = (Version)(*version)
 
 	return nil
 }
 
-func (v Version) MarshalJSON() ([]byte, error) {
-	return json.Marshal(v.String())
+func (vl *VersionList) MarshalJSON() ([]byte, error) {
+	var strs []string
+
+	for _, v := range *vl {
+		strs = append(strs, v.String())
+	}
+
+	return json.Marshal(strs)
 }
 
 type BoshReleaseBumpSetData struct {
 	BoshReleaseName            string
 	BoshReleaseVersionIsSemver bool
-	BoshReleaseVersions        []Version
-	TileBranches               []Reference
+	BoshReleaseVersions        VersionList
+	TileBranches               ReferenceList
 }

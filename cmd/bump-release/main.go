@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/Masterminds/semver"
-	"gopkg.in/src-d/go-git.v4/plumbing"
 	"log"
 	"os"
 	"path"
@@ -66,8 +64,7 @@ func main() {
 	}
 
 branchLoop:
-	for _, tb := range data.TileBranches {
-		tileBranch := plumbing.Reference(tb)
+	for _, tileBranch := range data.TileBranches {
 		wt, _ := tileRepo.Worktree()
 
 		fmt.Printf("checking out tile repository at %q\n", tileBranch.Name().Short())
@@ -107,7 +104,7 @@ branchLoop:
 
 		case false:
 			updatedVersionString = strconv.FormatInt(
-				(*semver.Version)(&data.BoshReleaseVersions[len(data.BoshReleaseVersions)-1]).Major(),
+				data.BoshReleaseVersions[len(data.BoshReleaseVersions)-1].Major(),
 				10,
 			)
 		}

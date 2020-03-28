@@ -4,15 +4,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"os"
 	"github.com/Masterminds/semver"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"html/template"
+	"net/http"
+	"os"
 	"sort"
 	"syscall/js"
-	"net/http"
-	"encoding/json"
 	"time"
 
 	"github.com/crhntr/relslash"
@@ -58,13 +58,13 @@ func main() {
 
 	t := template.New("page-template")
 	t = t.Funcs(template.FuncMap{
-		"ShortBranchName": func(ref relslash.Reference) string {
-			return (*plumbing.Reference)(&ref).Name().Short()
+		"ShortBranchName": func(ref *plumbing.Reference) string {
+			return ref.Name().Short()
 		},
-		"CurrentBOSHReleaseVersion": func(ref relslash.Reference) string {
+		"CurrentBOSHReleaseVersion": func(ref *plumbing.Reference) string {
 			for v, branches := range data.VersionMapping {
 				for _, b := range branches {
-					if (*plumbing.Reference)(&b).Strings() == (*plumbing.Reference)(&ref).Strings() {
+					if (*plumbing.Reference)(&b).Strings() == ref.Strings() {
 						ver, err := semver.NewVersion(v)
 						if err != nil {
 							fmt.Println("could not render version for branch: %s", err)
