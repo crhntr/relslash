@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/crhntr/relslash"
+	"github.com/julienschmidt/httprouter"
 	"gopkg.in/src-d/go-git.v4"
 
-	"github.com/julienschmidt/httprouter"
+	"github.com/crhntr/relslash"
 )
 
 const (
